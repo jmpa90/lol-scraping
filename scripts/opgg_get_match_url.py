@@ -25,7 +25,6 @@ CSV_PATH = setup_paths()
 # 2. UTILIDADES
 # ==========================================
 def log(msg, level="INFO"):
-    # Usamos print simple para que se vea limpio en los logs de GitHub
     print(f"[{level}] {msg}")
 
 def human_sleep(min_s=1.0, max_s=2.0):
@@ -62,7 +61,7 @@ def parse_match_details(raw_text: str, player_name: str) -> dict:
         data["deaths"] = int(kda_match.group(2))
         data["assists"] = int(kda_match.group(3))
 
-    data["champion"] = "Unknown" # Placeholder para futura lógica
+    data["champion"] = "Unknown" 
     return data
 
 # ==========================================
@@ -109,7 +108,7 @@ def scrape_player(game_name: str, tagline: str):
             total = buttons.count()
             log(f"Partidas encontradas: {total}", "INFO")
 
-            # Procesamos máximo 3 partidas por jugador para no saturar el log
+            # Procesamos máximo 3 partidas por jugador para la prueba
             limit = 3 
             for i in range(min(total, limit)): 
                 try:
@@ -130,7 +129,7 @@ def scrape_player(game_name: str, tagline: str):
                     btn.click(force=True)
                     human_sleep(1.0, 1.5)
 
-                    # --- ESTRATEGIA: ÚLTIMO TEXTBOX (Exitosa) ---
+                    # --- ESTRATEGIA: ÚLTIMO TEXTBOX ---
                     target_input = page.get_by_role("textbox").last
                     match_url = ""
                     
@@ -146,7 +145,6 @@ def scrape_player(game_name: str, tagline: str):
                         raw_text = match_card.inner_text()
                         parsed_data = parse_match_details(raw_text, game_name)
                         
-                        # Construir JSON Final
                         final_data = {
                             "player_name": game_name,
                             "player_tag": tagline,
@@ -157,13 +155,12 @@ def scrape_player(game_name: str, tagline: str):
                             "scraped_at": datetime.utcnow().isoformat()
                         }
 
-                        # --- SOLO IMPRIMIR (NO GUARDAR) ---
+                        # --- SOLO IMPRIMIR ---
                         print("\n" + "-"*30)
                         print(f"✅ DATOS EXTRAÍDOS (Partida {i+1}):")
                         print(json.dumps(final_data, indent=2, ensure_ascii=False))
                         print("-"*30 + "\n")
                     
-                    # Cerrar detalle
                     btn.click(force=True)
                     human_sleep(0.3, 0.6)
 
@@ -188,14 +185,19 @@ if __name__ == "__main__":
         df = pd.read_csv(CSV_PATH)
         log(f"Cargados {len(df)} jugadores del CSV.", "INIT")
         
+        # =======================================================
+        # ⚠️ MODO DE PRUEBA: LIMITAR A SOLO 1 JUGADOR
+        # =======================================================
+        if not df.empty:
+            log("⚠️ MODO TEST ACTIVADO: Procesando SOLO el primer jugador.", "TEST")
+            df = df.iloc[:1] # Tomamos solo la fila 0
+        # =======================================================
+        
         for index, row in df.iterrows():
             g_name = row["riotIdGameName"]
             tagline = row["riotIdTagline"]
             
             scrape_player(g_name, tagline)
-            
-            # Pausa breve entre jugadores
-            human_sleep(2, 4)
             
     except Exception as e:
         log(f"Fallo fatal: {e}", "CRITICAL")
