@@ -195,7 +195,7 @@ def scrape_player(service, game_name: str, tagline: str):
             total = buttons.count()
             log(f"Partidas encontradas: {total}", "INFO")
 
-            limit = 3 
+            limit = 100 
             for i in range(min(total, limit)): 
                 try:
                     btn = buttons.nth(i)
@@ -288,15 +288,15 @@ if __name__ == "__main__":
         df = pd.read_csv(CSV_PATH)
         log(f"Cargados {len(df)} jugadores del CSV.", "INIT")
         
-        # MODO TEST: SOLO 1 JUGADOR
-        if not df.empty:
-            log("⚠️ MODO TEST ACTIVADO: Procesando SOLO el primer jugador.", "TEST")
-            df = df.iloc[:1] 
+        # YA NO HAY FILTRO iloc[:1] -> PROCESA TODOS
         
         for index, row in df.iterrows():
             g_name = row["riotIdGameName"]
             tagline = row["riotIdTagline"]
             scrape_player(drive_service, g_name, tagline)
+            
+            # Importante: Mantener la pausa para evitar bloqueos masivos
+            human_sleep(5, 10) 
             
     except Exception as e:
         log(f"Fallo fatal: {e}", "CRITICAL")
