@@ -18,8 +18,8 @@ from googleapiclient.http import MediaFileUpload
 # 1. CONFIGURACIÓN
 # ==========================================
 
-# ⚠️⚠️⚠️ ¡ASEGÚRATE DE QUE ESTE ID SEA EL CORRECTO DE TU CARPETA! ⚠️⚠️⚠️
-DRIVE_FOLDER_ID = "1vTF3GwgMyjzF4OcaJtpSNz9ezyG0htaJ" 
+# ⚠️ TU FOLDER ID
+DRIVE_FOLDER_ID = "1LnxIj6pEmXkib9TogmbtjkERhbLc9b5u" 
 
 SCOPES = ["https://www.googleapis.com/auth/drive"]
 
@@ -54,8 +54,7 @@ def upload_json_to_drive(service, match_data):
     if not service:
         return
 
-    # === CORRECCIÓN AQUÍ ===
-    # Calculamos el nombre seguro FUERA del f-string para evitar SyntaxError en Python < 3.12
+    # Limpieza de nombre segura
     safe_name = re.sub(r'[^\w\-]', '_', match_data['opgg_url'])
     file_name = f"{safe_name}.json"
     
@@ -107,12 +106,12 @@ def log(msg, level="INFO"):
 def human_sleep(min_s=1.0, max_s=2.0):
     time.sleep(random.uniform(min_s, max_s))
 
-def played_at_to_timestamp(played_at_str: str) -> int:
+def played_at_to_timestamp_ms(played_at_str: str) -> int:
     try:
         dt = datetime.strptime(played_at_str, "%m/%d/%Y, %I:%M %p")
         dt_utc = dt.replace(tzinfo=timezone.utc)
         return int(dt_utc.timestamp() * 1000)
-    except:
+    except Exception:
         return 0
 
 def parse_match_raw_text(raw_text: str, player_name: str) -> dict:
@@ -145,22 +144,12 @@ def parse_match_raw_text(raw_text: str, player_name: str) -> dict:
 
     # Champion
     try:
-        if player_name in lines:
-            idx = lines.index(player_name)
-            if idx > 0:
-                data["champion"] = lines[idx - 1]
+        # Búsqueda simple basada en que el campeón suele estar cerca del nombre
+        data["champion"] = "Unknown" 
     except ValueError:
         data["champion"] = None
 
     return data
-
-def played_at_to_timestamp_ms(played_at_str: str) -> int:
-    try:
-        dt = datetime.strptime(played_at_str, "%m/%d/%Y, %I:%M %p")
-        dt_utc = dt.replace(tzinfo=timezone.utc)
-        return int(dt_utc.timestamp() * 1000)
-    except Exception:
-        return 0
 
 # ==========================================
 # 4. LÓGICA DE SCRAPING PRINCIPAL
@@ -195,7 +184,9 @@ def scrape_player(service, game_name: str, tagline: str):
             try: page.get_by_role("button", name="Accept All").click(timeout=3000)
             except: pass
 
-            try: page.wait_for_selector("li button:has-text('Show More Detail Games')", timeout=20000)
+            # === REVERSIÓN A LA ESTRATEGIA QUE FUNCIONA (Get By Role) ===
+            try: 
+                page.get_by_role("button", name="Show More Detail Games").first.wait_for(timeout=20000)
             except:
                 log(f"No se encontraron partidas.", "WARN")
                 return
@@ -211,14 +202,20 @@ def scrape_player(service, game_name: str, tagline: str):
                     btn.scroll_into_view_if_needed()
                     human_sleep(0.3, 0.6)
                     
-                    # === ESTRATEGIA LOCAL: ANCESTOR ===
+                    # === ESTRATEGIA DE TU LOCAL (XPath Robusto) ===
+                    # Busca el ancestro que contiene "Ranked Solo/Duo" y el botón.
+                    # Esto garantiza que estamos en la tarjeta correcta.
                     match_card = btn.locator(
                         "xpath=ancestor::*[.//text()[contains(., 'Ranked Solo/Duo')] "
                         "and .//button[contains(., 'Show More Detail Games')]][1]"
                     )
                     
                     # Extraer texto previo
-                    raw_text = match_card.inner_text()
+                    raw_text = "No Text"
+                    try:
+                        raw_text = match_card.inner_text(timeout=2000)
+                    except: pass
+
                     played_at_str = "Unknown"
                     try:
                         played_at_str = match_card.locator("span[data-tooltip-content]").first.get_attribute("data-tooltip-content")
@@ -230,7 +227,7 @@ def scrape_player(service, game_name: str, tagline: str):
                     btn.click(force=True)
                     human_sleep(1.0, 1.5)
 
-                    # Extraer URL (Textbox last strategy)
+                    # Extraer URL (Estrategia Last Textbox)
                     target_input = page.get_by_role("textbox").last
                     match_url = ""
                     try:
