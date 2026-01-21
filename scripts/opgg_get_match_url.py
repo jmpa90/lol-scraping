@@ -9,7 +9,7 @@ import re
 from urllib.parse import quote
 
 # ==========================================
-# CONFIGURACIÓN DE RUTAS (Tu código que ya funciona)
+# PATH CONFIGURATION
 # ==========================================
 
 def setup_paths():
@@ -28,8 +28,8 @@ CSV_PATH = setup_paths()
 def log(msg):
     print(f"[INFO] {msg}")
 
-def human_sleep():
-    time.sleep(random.uniform(1.0, 2.0))
+def human_sleep(min_s=1.0, max_s=2.0):
+    time.sleep(random.uniform(min_s, max_s))
 
 # ==========================================
 # SCRAPER LOGIC
@@ -51,84 +51,74 @@ def scrape_single_test(game_name: str, tagline: str):
         )
         context = browser.new_context(
             viewport={"width": 1920, "height": 1080},
-            locale="en-US", # Forzamos inglés para asegurar que el texto coincida
+            locale="en-US",
             user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         )
         page = context.new_page()
-        
-        # Truco anti-bot extra
         page.add_init_script("Object.defineProperty(navigator, 'webdriver', { get: () => undefined });")
 
         try:
             log("Navegando...")
             page.goto(opgg_url, wait_until="domcontentloaded", timeout=60000)
-            human_sleep()
+            human_sleep(2, 3) # Espera inicial un poco más larga para asegurar carga de JS
 
             # --- NUEVO: INTENTAR CERRAR COOKIES / ADS ---
             try:
-                # Intentar cerrar el banner de cookies si aparece (común en Europa/USA)
                 accept_cookies = page.get_by_role("button", name="Accept All")
                 if accept_cookies.is_visible():
-                    log("🍪 Aceptando cookies para limpiar pantalla...")
+                    log("🍪 Aceptando cookies...")
                     accept_cookies.click()
-                    human_sleep()
-            except:
-                pass
-            # --------------------------------------------
+                    human_sleep(0.5, 1)
+            except: pass
 
-            log("Esperando lista de partidas...")
-            
-            # USAMOS LA LÓGICA DE TU CÓDIGO LOCAL (get_by_role)
-            # En lugar de buscar un texto suelto, buscamos el botón accesible
+            log("Buscando botones de partidas...")
             try:
-                # Esperamos a que aparezca AL MENOS UNO de los botones de detalle
-                page.get_by_role("button", name="Show More Detail Games").first.wait_for(timeout=15000)
-                log("✅ Botones encontrados (Método Local).")
-            except Exception as e:
-                log(f"❌ No se encontraron botones con el nombre exacto. Error: {e}")
-                
-                # DEBUG: Imprimir qué botones SÍ ve Playwright
-                log("🔍 LISTANDO TODOS LOS BOTONES VISIBLES PARA DEBUG:")
-                all_buttons = page.get_by_role("button").all()
-                for btn in all_buttons[:10]: # Solo los primeros 10 para no spamear
-                    try:
-                        txt = btn.inner_text().replace('\n', ' ')
-                        name = btn.get_attribute("aria-label") or "Sin Label"
-                        print(f"   - Texto: '{txt}' | Label: '{name}'")
-                    except: pass
-
-                log("📸 Tomando foto del fallo...")
-                page.screenshot(path="debug_failed_buttons.png", full_page=True)
+                page.get_by_role("button", name="Show More Detail Games").first.wait_for(timeout=20000)
+            except:
+                log("❌ No se encontraron los botones a tiempo.")
+                page.screenshot(path="debug_no_buttons.png")
                 return
 
-            # Si llegamos aquí, encontramos los botones
             buttons = page.get_by_role("button", name="Show More Detail Games")
             count = buttons.count()
-            log(f"Partidas encontradas: {count}")
+            log(f"✅ Partidas encontradas: {count}")
 
             if count > 0:
                 log("Procesando la PRIMERA partida...")
                 btn = buttons.first
-                
-                # Scroll para asegurar que el ad no lo tapa
                 btn.scroll_into_view_if_needed()
-                human_sleep()
+                human_sleep(0.5, 1)
                 
-                # Intentar clic (con force=True por si un ad lo tapa parcialmente)
+                # Clic forzado
+                log("Haciendo Click...")
                 btn.click(force=True)
-                human_sleep()
                 
-                # Obtener URL
+                # --- AQUÍ ESTABA EL ERROR ---
+                # Ahora esperamos explícitamente a que aparezca el input
+                log("⏳ Esperando que se expanda el detalle (Timeout 15s)...")
+                
                 try:
+                    # Esperamos hasta 15 segundos a que aparezca el input con la clase .link
+                    page.wait_for_selector("input.link", state="visible", timeout=15000)
+                    
+                    # Una vez visible, lo capturamos
                     url_input = page.locator("input.link").last
                     match_url = url_input.get_attribute("value")
-                    print(f"\n🎉 ¡ÉXITO! URL OBTENIDA: {match_url}")
-                except:
-                    log("❌ Se hizo clic, pero no apareció el input con la URL.")
-                    page.screenshot(path="debug_click_fail.png")
+                    
+                    if match_url:
+                        print(f"\n🎉 ¡ÉXITO TOTAL! URL OBTENIDA: {match_url}")
+                        
+                        # (Opcional) Guardar foto del éxito
+                        page.screenshot(path="success_match_open.png")
+                    else:
+                        log("⚠️ El input apareció pero estaba vacío.")
+                        
+                except Exception as e:
+                    log(f"❌ El detalle no se abrió o el input no apareció. Error: {e}")
+                    page.screenshot(path="debug_expand_fail.png", full_page=True)
 
             else:
-                log("⚠️ El contador de botones es 0.")
+                log("⚠️ 0 Partidas encontradas.")
 
         except Exception as e:
             log(f"❌ Error Crítico: {e}")
