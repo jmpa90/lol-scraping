@@ -1,0 +1,47 @@
+name: Check Players Connection
+
+on: 
+  workflow_dispatch: # Ejecución manual
+
+jobs:
+  verify-data-access:
+    runs-on: ubuntu-latest
+
+    steps:
+      # -------------------------------------------------------
+      # 1. Bajar tu código (lol-scraping) en carpeta 'scraper_repo'
+      # -------------------------------------------------------
+      - name: Checkout Code Repo
+        uses: actions/checkout@v4
+        with:
+          path: scraper_repo
+
+      # -------------------------------------------------------
+      # 2. Bajar los datos (lol-replays-downloader) en 'data_repo'
+      # -------------------------------------------------------
+      - name: Checkout Data Repo
+        uses: actions/checkout@v4
+        with:
+          repository: jmpa90/lol-replays-downloader
+          token: ${{ secrets.DATA_REPO_TOKEN }}
+          path: data_repo
+          sparse-checkout: |
+            data/players.csv
+
+      # -------------------------------------------------------
+      # 3. Setup Python
+      # -------------------------------------------------------
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install Pandas
+        run: pip install pandas
+
+      # -------------------------------------------------------
+      # 4. Ejecutar el script
+      # -------------------------------------------------------
+      - name: Run Python Script
+        # Ejecutamos apuntando al archivo exacto dentro de scripts/
+        run: python scraper_repo/scripts/opgg_get_match_url.py
