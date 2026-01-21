@@ -208,7 +208,7 @@ if __name__ == "__main__":
         # MODO TEST: SOLO 1 JUGADOR
         if not df.empty:
             log("⚠️ MODO TEST ACTIVADO: Procesando SOLO el primer jugador.", "TEST")
-            df = df.iloc[:1] 
+            df = df.iloc[:2] 
         
         for index, row in df.iterrows():
             g_name = row["riotIdGameName"]
