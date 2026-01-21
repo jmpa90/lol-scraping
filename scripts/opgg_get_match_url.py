@@ -46,8 +46,9 @@ def parse_match_details(raw_text: str) -> dict:
             break
     return data
 
+
 # ==========================================
-# SCRAPER LOGIC
+# SCRAPER LOGIC CON SCREENSHOT
 # ==========================================
 
 def scrape_single_test(game_name: str, tagline: str):
@@ -61,10 +62,15 @@ def scrape_single_test(game_name: str, tagline: str):
 
     with sync_playwright() as p:
         browser = p.chromium.launch(
-            headless=True, # Obligatorio en GitHub Actions
+            headless=True,
             args=["--window-size=1920,1080", "--disable-blink-features=AutomationControlled"]
         )
-        page = browser.new_page(viewport={"width": 1920, "height": 1080})
+        # Importante: Definir el user_agent ayuda a evitar bloqueos
+        context = browser.new_context(
+            viewport={"width": 1920, "height": 1080},
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        )
+        page = context.new_page()
 
         try:
             log("Navegando...")
@@ -73,70 +79,28 @@ def scrape_single_test(game_name: str, tagline: str):
 
             # Buscar botón "Show More"
             show_more_sel = "button:has-text('Show More Detail Games')"
+            
             try:
-                page.wait_for_selector(show_more_sel, timeout=15000)
+                page.wait_for_selector(show_more_sel, timeout=10000)
                 log("✅ Perfil cargado correctamente.")
             except:
-                log("❌ No se encontró el botón 'Show More'. Posible bloqueo o perfil vacío.")
+                log("❌ No se encontró el botón. Tomando captura de pantalla...")
+                
+                # --- AQUÍ TOMAMOS LA FOTO ---
+                # Guardamos en la carpeta actual del script (scraper_repo)
+                screenshot_name = f"debug_{game_name}.png"
+                page.screenshot(path=screenshot_name, full_page=True)
+                print(f"📸 SCREENSHOT GUARDADO: {screenshot_name}")
+                # -----------------------------
                 return
 
-            buttons = page.locator(show_more_sel)
-            count = buttons.count()
-            log(f"Partidas encontradas: {count}")
+            # ... (Resto de tu lógica de extracción si lo encuentra) ...
+            
+            # (Si quieres ver la foto aunque funcione, puedes descomentar esto:)
+            # page.screenshot(path=f"success_{game_name}.png")
 
-            if count > 0:
-                log("Extrayendo la PRIMERA partida...")
-                
-                # Click en la primera partida
-                btn = buttons.first
-                btn.click()
-                human_sleep()
-                
-                # Obtener URL
-                url_input = page.locator("input.link").last
-                match_url = url_input.get_attribute("value")
-                
-                # Obtener Datos básicos
-                card = btn.locator("xpath=ancestor::li").first
-                if not card.count(): card = btn.locator("xpath=ancestor::div[contains(@class, 'GameItem')]").first
-                
-                raw_text = card.inner_text()
-                parsed_data = parse_match_details(raw_text)
-
-                # === RESULTADO FINAL ===
-                result = {
-                    "player": game_name,
-                    "match_url": match_url,
-                    "details": parsed_data
-                }
-                
-                print("\n" + "★"*20 + " RESULTADO OBTENIDO " + "★"*20)
-                print(json.dumps(result, indent=4)) # <--- ESTO ES LO QUE VERÁS EN LOGS
-                print("★"*60 + "\n")
-
-            else:
-                log("No hay partidas para mostrar.")
-                
         except Exception as e:
-            log(f"❌ Error: {e}")
+            log(f"❌ Error General: {e}")
+            page.screenshot(path="error_crash.png") # Foto si crashea
         finally:
             browser.close()
-
-# ==========================================
-# MAIN
-# ==========================================
-
-if __name__ == "__main__":
-    if not os.path.exists(CSV_PATH):
-        log(f"Error Crítico: No se encuentra el CSV en {CSV_PATH}")
-        sys.exit(1)
-
-    try:
-        df = pd.read_csv(CSV_PATH)
-        # Solo tomamos el PRIMER jugador para la prueba
-        first_row = df.iloc[0]
-        scrape_single_test(first_row["riotIdGameName"], first_row["riotIdTagline"])
-            
-    except Exception as e:
-        log(f"Error Fatal: {e}")
-        sys.exit(1)
