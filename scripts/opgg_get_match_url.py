@@ -43,23 +43,24 @@ def parse_match_details(raw_text: str, player_name: str) -> dict:
     data = {}
     if not lines: return data
     
-    data["queue"] = lines[0]
-    
-    for l in lines:
-        if l in ("Victory", "Defeat", "Remake"):
-            data["result"] = l
-            break
-            
-    for l in lines:
-        if re.match(r"\d+m \d+s", l):
-            data["duration"] = l
-            break
-
-    kda_match = re.search(r"(\d+)\s*/\s*(\d+)\s*/\s*(\d+)", raw_text)
-    if kda_match:
-        data["kills"] = int(kda_match.group(1))
-        data["deaths"] = int(kda_match.group(2))
-        data["assists"] = int(kda_match.group(3))
+    # Intento de parseo seguro
+    try:
+        data["queue"] = lines[0]
+        for l in lines:
+            if l in ("Victory", "Defeat", "Remake"):
+                data["result"] = l
+                break
+        for l in lines:
+            if re.match(r"\d+m \d+s", l):
+                data["duration"] = l
+                break
+        kda_match = re.search(r"(\d+)\s*/\s*(\d+)\s*/\s*(\d+)", raw_text)
+        if kda_match:
+            data["kills"] = int(kda_match.group(1))
+            data["deaths"] = int(kda_match.group(2))
+            data["assists"] = int(kda_match.group(3))
+    except:
+        pass
 
     data["champion"] = "Unknown" 
     return data
@@ -108,20 +109,27 @@ def scrape_player(game_name: str, tagline: str):
             total = buttons.count()
             log(f"Partidas encontradas: {total}", "INFO")
 
-            # Procesamos máximo 3 partidas por jugador para la prueba
             limit = 3 
             for i in range(min(total, limit)): 
                 try:
                     btn = buttons.nth(i)
                     btn.scroll_into_view_if_needed()
                     
-                    # Extraer Fecha
-                    match_card = btn.locator("xpath=ancestor::li").first
+                    # --- CORRECCIÓN DE SELECTOR ---
+                    # El 'ancestor::li' fallaba. Ahora buscamos el contenedor padre genérico 
+                    # que envuelve al botón y al texto de la partida.
+                    # Buscamos 4 niveles arriba (suele ser suficiente para salir del botón al contenedor)
+                    match_card = btn.locator("xpath=../../..").first
+                    
+                    # Extraer Fecha (con manejo de errores si no lo encuentra)
                     played_at_str = "Unknown"
                     try:
                         time_span = match_card.locator("span[data-tooltip-content]").first
+                        # Damos un timeout pequeño por si acaso
+                        time_span.wait_for(timeout=1000) 
                         played_at_str = time_span.get_attribute("data-tooltip-content")
-                    except: pass
+                    except: 
+                        pass
                     
                     played_at_ts = played_at_to_timestamp(played_at_str)
 
@@ -129,7 +137,7 @@ def scrape_player(game_name: str, tagline: str):
                     btn.click(force=True)
                     human_sleep(1.0, 1.5)
 
-                    # --- ESTRATEGIA: ÚLTIMO TEXTBOX ---
+                    # ESTRATEGIA: ÚLTIMO TEXTBOX
                     target_input = page.get_by_role("textbox").last
                     match_url = ""
                     
@@ -138,11 +146,18 @@ def scrape_player(game_name: str, tagline: str):
                         match_url = target_input.get_attribute("value")
                     except:
                         log(f"No se pudo extraer URL partida {i+1}", "WARN")
+                        # Intentamos cerrar antes de continuar
+                        btn.click(force=True)
                         continue
 
                     if match_url:
                         # Extraer Datos
-                        raw_text = match_card.inner_text()
+                        raw_text = "No Text"
+                        try:
+                            raw_text = match_card.inner_text(timeout=2000)
+                        except:
+                            log("No se pudo leer texto de la tarjeta", "WARN")
+
                         parsed_data = parse_match_details(raw_text, game_name)
                         
                         final_data = {
@@ -155,7 +170,6 @@ def scrape_player(game_name: str, tagline: str):
                             "scraped_at": datetime.utcnow().isoformat()
                         }
 
-                        # --- SOLO IMPRIMIR ---
                         print("\n" + "-"*30)
                         print(f"✅ DATOS EXTRAÍDOS (Partida {i+1}):")
                         print(json.dumps(final_data, indent=2, ensure_ascii=False))
@@ -185,18 +199,14 @@ if __name__ == "__main__":
         df = pd.read_csv(CSV_PATH)
         log(f"Cargados {len(df)} jugadores del CSV.", "INIT")
         
-        # =======================================================
-        # ⚠️ MODO DE PRUEBA: LIMITAR A SOLO 1 JUGADOR
-        # =======================================================
+        # MODO TEST: SOLO 1 JUGADOR
         if not df.empty:
             log("⚠️ MODO TEST ACTIVADO: Procesando SOLO el primer jugador.", "TEST")
-            df = df.iloc[:1] # Tomamos solo la fila 0
-        # =======================================================
+            df = df.iloc[:1] 
         
         for index, row in df.iterrows():
             g_name = row["riotIdGameName"]
             tagline = row["riotIdTagline"]
-            
             scrape_player(g_name, tagline)
             
     except Exception as e:
