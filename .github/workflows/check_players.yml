@@ -1,11 +1,10 @@
-name: Daily OP.GG Scrape (Print Only)
+name: Daily OP.GG Scrape (Drive Upload)
 
 on:
   schedule:
     - cron: '0 9 * * *'
   workflow_dispatch:
 
-# Ya no necesitamos permisos de escritura (contents: write) porque no guardamos nada
 permissions:
   contents: read
 
@@ -33,6 +32,7 @@ jobs:
         with:
           python-version: '3.10'
 
+      # Cache pip
       - name: Cache Python packages
         uses: actions/cache@v4
         with:
@@ -41,6 +41,7 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-pip-
 
+      # Cache Playwright
       - name: Cache Playwright Browsers
         id: cache-playwright
         uses: actions/cache@v4
@@ -48,10 +49,11 @@ jobs:
           path: ~/.cache/ms-playwright
           key: ${{ runner.os }}-playwright-v1.57.0
 
+      # Instalamos TODO (pandas, playwright, google-api...)
       - name: Install Dependencies
         working-directory: ./scraper_repo
         run: |
-          pip install pandas playwright
+          pip install pandas playwright google-api-python-client google-auth-httplib2 google-auth-oauthlib
           
       - name: Install Playwright (If not cached)
         working-directory: ./scraper_repo
@@ -60,11 +62,13 @@ jobs:
           playwright install chromium
           playwright install-deps
 
-      - name: Run Scraper (Print Only)
+      - name: Run Scraper and Upload
         working-directory: ./scraper_repo
+        env:
+          # AQUÍ PASAMOS EL TOKEN AL SCRIPT
+          GOOGLE_DRIVE_TOKEN: ${{ secrets.GOOGLE_DRIVE_TOKEN }}
         run: python scripts/opgg_get_match_url.py
 
-      # Subimos logs visuales solo si falla, por seguridad
       - name: Upload Debug Artifacts
         if: failure()
         uses: actions/upload-artifact@v4
