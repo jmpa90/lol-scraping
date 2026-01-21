@@ -9,43 +9,14 @@ import re
 from urllib.parse import quote
 
 # ==========================================
-# PATH CONFIGURATION
+# CONFIGURACIÓN DE RUTAS (Tu código que ya funciona)
 # ==========================================
 
 def setup_paths():
     print("--- [DEBUG] Iniciando configuración de rutas ---")
-    
-    # 1. Dónde está ESTE script
     script_dir = os.path.dirname(os.path.abspath(__file__))
-    print(f"📍 Script directory: {script_dir}")
-
-    # 2. Intentamos localizar el CSV
-    # Estructura esperada en GitHub Actions:
-    # workspace/scraper_repo/scripts/opgg_get_match_url.py  <-- Estamos aquí
-    # workspace/data_repo/data/players.csv                 <-- Queremos ir aquí
-    
-    # Subimos 2 niveles: scripts -> scraper_repo -> workspace
     workspace_dir = os.path.abspath(os.path.join(script_dir, "..", ".."))
     csv_path = os.path.join(workspace_dir, "data_repo", "data", "players.csv")
-    
-    print(f"🔍 Buscando CSV en: {csv_path}")
-    
-    # DIAGNÓSTICO: Si no existe, mostrar qué hay en la carpeta 'data_repo'
-    if not os.path.exists(csv_path):
-        print("❌ EL CSV NO APARECE. Diagnóstico de carpetas:")
-        data_repo_path = os.path.join(workspace_dir, "data_repo")
-        if os.path.exists(data_repo_path):
-            print(f"📂 Contenido de {data_repo_path}:")
-            try:
-                for root, dirs, files in os.walk(data_repo_path):
-                    print(f"   {root}/")
-                    for f in files:
-                        print(f"     - {f}")
-            except Exception as e:
-                print(f"Error listando carpetas: {e}")
-        else:
-            print(f"⚠️ La carpeta {data_repo_path} NO EXISTE. Revisa el YAML.")
-            
     return os.path.abspath(csv_path)
 
 CSV_PATH = setup_paths()
@@ -60,20 +31,8 @@ def log(msg):
 def human_sleep():
     time.sleep(random.uniform(1.0, 2.0))
 
-def parse_match_details(raw_text: str) -> dict:
-    lines = [l.strip() for l in raw_text.splitlines() if l.strip()]
-    data = {}
-    if not lines: return data
-    
-    data["queue"] = lines[0]
-    for l in lines:
-        if l in ("Victory", "Defeat"):
-            data["result"] = l
-            break
-    return data
-
 # ==========================================
-# SCRAPER LOGIC CON SCREENSHOT
+# SCRAPER LOGIC
 # ==========================================
 
 def scrape_single_test(game_name: str, tagline: str):
@@ -92,67 +51,105 @@ def scrape_single_test(game_name: str, tagline: str):
         )
         context = browser.new_context(
             viewport={"width": 1920, "height": 1080},
+            locale="en-US", # Forzamos inglés para asegurar que el texto coincida
             user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         )
         page = context.new_page()
+        
+        # Truco anti-bot extra
+        page.add_init_script("Object.defineProperty(navigator, 'webdriver', { get: () => undefined });")
 
         try:
             log("Navegando...")
             page.goto(opgg_url, wait_until="domcontentloaded", timeout=60000)
             human_sleep()
 
-            # Buscar botón "Show More"
-            show_more_sel = "button:has-text('Show More Detail Games')"
-            
+            # --- NUEVO: INTENTAR CERRAR COOKIES / ADS ---
             try:
-                page.wait_for_selector(show_more_sel, timeout=10000)
-                log("✅ Perfil cargado correctamente.")
+                # Intentar cerrar el banner de cookies si aparece (común en Europa/USA)
+                accept_cookies = page.get_by_role("button", name="Accept All")
+                if accept_cookies.is_visible():
+                    log("🍪 Aceptando cookies para limpiar pantalla...")
+                    accept_cookies.click()
+                    human_sleep()
             except:
-                log("❌ No se encontró el botón. Tomando captura de pantalla...")
-                screenshot_name = f"debug_{game_name}.png"
-                page.screenshot(path=screenshot_name, full_page=True)
-                print(f"📸 SCREENSHOT GUARDADO: {screenshot_name}")
+                pass
+            # --------------------------------------------
+
+            log("Esperando lista de partidas...")
+            
+            # USAMOS LA LÓGICA DE TU CÓDIGO LOCAL (get_by_role)
+            # En lugar de buscar un texto suelto, buscamos el botón accesible
+            try:
+                # Esperamos a que aparezca AL MENOS UNO de los botones de detalle
+                page.get_by_role("button", name="Show More Detail Games").first.wait_for(timeout=15000)
+                log("✅ Botones encontrados (Método Local).")
+            except Exception as e:
+                log(f"❌ No se encontraron botones con el nombre exacto. Error: {e}")
+                
+                # DEBUG: Imprimir qué botones SÍ ve Playwright
+                log("🔍 LISTANDO TODOS LOS BOTONES VISIBLES PARA DEBUG:")
+                all_buttons = page.get_by_role("button").all()
+                for btn in all_buttons[:10]: # Solo los primeros 10 para no spamear
+                    try:
+                        txt = btn.inner_text().replace('\n', ' ')
+                        name = btn.get_attribute("aria-label") or "Sin Label"
+                        print(f"   - Texto: '{txt}' | Label: '{name}'")
+                    except: pass
+
+                log("📸 Tomando foto del fallo...")
+                page.screenshot(path="debug_failed_buttons.png", full_page=True)
                 return
 
-            buttons = page.locator(show_more_sel)
+            # Si llegamos aquí, encontramos los botones
+            buttons = page.get_by_role("button", name="Show More Detail Games")
             count = buttons.count()
             log(f"Partidas encontradas: {count}")
-            
-            # (Opcional) Guardar pantallazo de éxito también
-            # page.screenshot(path="success.png")
+
+            if count > 0:
+                log("Procesando la PRIMERA partida...")
+                btn = buttons.first
+                
+                # Scroll para asegurar que el ad no lo tapa
+                btn.scroll_into_view_if_needed()
+                human_sleep()
+                
+                # Intentar clic (con force=True por si un ad lo tapa parcialmente)
+                btn.click(force=True)
+                human_sleep()
+                
+                # Obtener URL
+                try:
+                    url_input = page.locator("input.link").last
+                    match_url = url_input.get_attribute("value")
+                    print(f"\n🎉 ¡ÉXITO! URL OBTENIDA: {match_url}")
+                except:
+                    log("❌ Se hizo clic, pero no apareció el input con la URL.")
+                    page.screenshot(path="debug_click_fail.png")
+
+            else:
+                log("⚠️ El contador de botones es 0.")
 
         except Exception as e:
-            log(f"❌ Error General: {e}")
+            log(f"❌ Error Crítico: {e}")
             page.screenshot(path="error_crash.png")
         finally:
             browser.close()
 
 # ==========================================
-# MAIN EXECUTION (ESTO FALTABA)
+# MAIN EXECUTION
 # ==========================================
 
 if __name__ == "__main__":
-    print("🟢 Script iniciado.")
-    
     if not os.path.exists(CSV_PATH):
         print(f"🔴 ERROR FATAL: No se encontró el CSV en {CSV_PATH}")
         sys.exit(1)
 
     try:
-        print(f"📖 Leyendo CSV...")
         df = pd.read_csv(CSV_PATH)
-        print(f"✅ CSV cargado. {len(df)} filas.")
-        
         if not df.empty:
             first_row = df.iloc[0]
-            # Aseguramos que las columnas existen
-            if "riotIdGameName" in df.columns and "riotIdTagline" in df.columns:
-                scrape_single_test(first_row["riotIdGameName"], first_row["riotIdTagline"])
-            else:
-                print(f"⚠️ Columnas incorrectas en CSV. Encontradas: {df.columns.tolist()}")
-        else:
-            print("⚠️ El CSV está vacío.")
-            
+            scrape_single_test(first_row["riotIdGameName"], first_row["riotIdTagline"])
     except Exception as e:
-        print(f"🔴 Error Fatal en Main: {e}")
+        print(f"🔴 Error Main: {e}")
         sys.exit(1)
