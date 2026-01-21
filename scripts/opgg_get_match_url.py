@@ -2,15 +2,18 @@ from playwright.sync_api import sync_playwright
 import pandas as pd
 import time
 import random
+import json
 import os
 import sys
+import re
+from datetime import datetime, timezone
 from urllib.parse import quote
 
 # ==========================================
-# CONFIGURACIÓN DE RUTAS (INFRAESTRUCTURA GITHUB)
+# 1. CONFIGURACIÓN DE RUTAS
 # ==========================================
 def setup_paths():
-    print("--- [DEBUG] Iniciando configuración de rutas ---")
+    print("--- [SETUP] Configurando rutas... ---")
     script_dir = os.path.dirname(os.path.abspath(__file__))
     workspace_dir = os.path.abspath(os.path.join(script_dir, "..", ".."))
     csv_path = os.path.join(workspace_dir, "data_repo", "data", "players.csv")
@@ -19,26 +22,61 @@ def setup_paths():
 CSV_PATH = setup_paths()
 
 # ==========================================
-# UTILS
+# 2. UTILIDADES
 # ==========================================
-def log(msg):
-    print(f"[INFO] {msg}")
+def log(msg, level="INFO"):
+    # Usamos print simple para que se vea limpio en los logs de GitHub
+    print(f"[{level}] {msg}")
 
 def human_sleep(min_s=1.0, max_s=2.0):
     time.sleep(random.uniform(min_s, max_s))
 
+def played_at_to_timestamp(played_at_str: str) -> int:
+    try:
+        dt = datetime.strptime(played_at_str, "%m/%d/%Y, %I:%M %p")
+        dt_utc = dt.replace(tzinfo=timezone.utc)
+        return int(dt_utc.timestamp() * 1000)
+    except:
+        return 0
+
+def parse_match_details(raw_text: str, player_name: str) -> dict:
+    lines = [l.strip() for l in raw_text.splitlines() if l.strip()]
+    data = {}
+    if not lines: return data
+    
+    data["queue"] = lines[0]
+    
+    for l in lines:
+        if l in ("Victory", "Defeat", "Remake"):
+            data["result"] = l
+            break
+            
+    for l in lines:
+        if re.match(r"\d+m \d+s", l):
+            data["duration"] = l
+            break
+
+    kda_match = re.search(r"(\d+)\s*/\s*(\d+)\s*/\s*(\d+)", raw_text)
+    if kda_match:
+        data["kills"] = int(kda_match.group(1))
+        data["deaths"] = int(kda_match.group(2))
+        data["assists"] = int(kda_match.group(3))
+
+    data["champion"] = "Unknown" # Placeholder para futura lógica
+    return data
+
 # ==========================================
-# SCRAPER LOGIC (LÓGICA LOCAL ADAPTADA)
+# 3. LÓGICA DE SCRAPING
 # ==========================================
-def scrape_single_test(game_name: str, tagline: str):
+def scrape_player(game_name: str, tagline: str):
     player_id = f"{quote(game_name)}-{tagline}"
     opgg_url = f"https://op.gg/lol/summoners/kr/{player_id}?queue_type=SOLORANKED"
     
-    print("\n" + "="*50)
-    print(f"🚀 INICIANDO TEST PARA: {game_name} #{tagline}")
+    print("\n" + "="*60)
+    print(f"🚀 PROCESANDO: {game_name} #{tagline}")
     print(f"🔗 URL: {opgg_url}")
-    print("="*50)
-
+    print("="*60)
+    
     with sync_playwright() as p:
         browser = p.chromium.launch(
             headless=True,
@@ -53,87 +91,112 @@ def scrape_single_test(game_name: str, tagline: str):
         page.add_init_script("Object.defineProperty(navigator, 'webdriver', { get: () => undefined });")
 
         try:
-            log("Navegando...")
+            log(f"Navegando...", "NET")
             page.goto(opgg_url, wait_until="domcontentloaded", timeout=60000)
             human_sleep(2, 3)
 
-            # Intentar cerrar cookies (Best effort)
             try:
-                page.get_by_role("button", name="Accept All").click(timeout=2000)
+                page.get_by_role("button", name="Accept All").click(timeout=3000)
             except: pass
 
-            log("Buscando botones 'Show More Detail Games'...")
-            
-            # Usamos get_by_role como en tu script local
             try:
                 page.get_by_role("button", name="Show More Detail Games").first.wait_for(timeout=20000)
             except:
-                log("❌ No se encontraron botones.")
-                page.screenshot(path="debug_no_buttons.png")
+                log(f"No se encontraron partidas.", "WARN")
                 return
 
             buttons = page.get_by_role("button", name="Show More Detail Games")
-            count = buttons.count()
-            log(f"✅ Partidas encontradas: {count}")
+            total = buttons.count()
+            log(f"Partidas encontradas: {total}", "INFO")
 
-            if count > 0:
-                log("Procesando la PRIMERA partida...")
-                btn = buttons.first
-                btn.scroll_into_view_if_needed()
-                
-                # Clic forzado (útil para GitHub Actions con Ads)
-                log("Haciendo Click...")
-                btn.click(force=True)
-                
-                # --- LA CLAVE DE TU SCRIPT LOCAL ---
-                log("⏳ Esperando un momento a que aparezca el textbox...")
-                human_sleep(1.5, 2.5) # Damos tiempo a la UI
-                
-                log("🎣 Intentando obtener el ÚLTIMO textbox de toda la página...")
-                
+            # Procesamos máximo 3 partidas por jugador para no saturar el log
+            limit = 3 
+            for i in range(min(total, limit)): 
                 try:
-                    # ESTRATEGIA ORIGINAL LOCAL:
-                    # Buscamos TODOS los textboxes y tomamos el ÚLTIMO (.last)
-                    # Esto evita tener que buscar dentro de un contenedor específico
-                    target_input = page.get_by_role("textbox").last
+                    btn = buttons.nth(i)
+                    btn.scroll_into_view_if_needed()
                     
-                    # Esperamos que esté listo (por seguridad)
-                    target_input.wait_for(state="attached", timeout=5000)
+                    # Extraer Fecha
+                    match_card = btn.locator("xpath=ancestor::li").first
+                    played_at_str = "Unknown"
+                    try:
+                        time_span = match_card.locator("span[data-tooltip-content]").first
+                        played_at_str = time_span.get_attribute("data-tooltip-content")
+                    except: pass
                     
-                    match_url = target_input.get_attribute("value")
-                    
-                    if match_url:
-                        print(f"\n🎉 ¡ÉXITO TOTAL! URL OBTENIDA: {match_url}")
-                        page.screenshot(path="success.png")
-                    else:
-                        log("⚠️ Textbox encontrado pero VALUE vacío.")
-                        
-                except Exception as e:
-                    log(f"❌ Falló la estrategia del último textbox: {e}")
-                    page.screenshot(path="debug_textbox_fail.png", full_page=True)
+                    played_at_ts = played_at_to_timestamp(played_at_str)
 
-            else:
-                log("⚠️ 0 Partidas encontradas.")
+                    # Expandir
+                    btn.click(force=True)
+                    human_sleep(1.0, 1.5)
+
+                    # --- ESTRATEGIA: ÚLTIMO TEXTBOX (Exitosa) ---
+                    target_input = page.get_by_role("textbox").last
+                    match_url = ""
+                    
+                    try:
+                        target_input.wait_for(state="attached", timeout=5000)
+                        match_url = target_input.get_attribute("value")
+                    except:
+                        log(f"No se pudo extraer URL partida {i+1}", "WARN")
+                        continue
+
+                    if match_url:
+                        # Extraer Datos
+                        raw_text = match_card.inner_text()
+                        parsed_data = parse_match_details(raw_text, game_name)
+                        
+                        # Construir JSON Final
+                        final_data = {
+                            "player_name": game_name,
+                            "player_tag": tagline,
+                            "opgg_url": match_url,
+                            "played_at": played_at_str,
+                            "played_at_timestamp": played_at_ts,
+                            **parsed_data,
+                            "scraped_at": datetime.utcnow().isoformat()
+                        }
+
+                        # --- SOLO IMPRIMIR (NO GUARDAR) ---
+                        print("\n" + "-"*30)
+                        print(f"✅ DATOS EXTRAÍDOS (Partida {i+1}):")
+                        print(json.dumps(final_data, indent=2, ensure_ascii=False))
+                        print("-"*30 + "\n")
+                    
+                    # Cerrar detalle
+                    btn.click(force=True)
+                    human_sleep(0.3, 0.6)
+
+                except Exception as e:
+                    log(f"Error en partida {i+1}: {e}", "ERROR")
+                    continue
 
         except Exception as e:
-            log(f"❌ Error Crítico: {e}")
-            page.screenshot(path="error_crash.png")
+            log(f"Error general: {e}", "ERROR")
         finally:
             browser.close()
 
 # ==========================================
-# MAIN EXECUTION
+# 4. EJECUCIÓN PRINCIPAL
 # ==========================================
 if __name__ == "__main__":
     if not os.path.exists(CSV_PATH):
-        print(f"🔴 ERROR FATAL: No se encontró el CSV en {CSV_PATH}")
+        log(f"CSV no encontrado en {CSV_PATH}", "CRITICAL")
         sys.exit(1)
 
     try:
         df = pd.read_csv(CSV_PATH)
-        if not df.empty:
-            first_row = df.iloc[0]
-            scrape_single_test(first_row["riotIdGameName"], first_row["riotIdTagline"])
+        log(f"Cargados {len(df)} jugadores del CSV.", "INIT")
+        
+        for index, row in df.iterrows():
+            g_name = row["riotIdGameName"]
+            tagline = row["riotIdTagline"]
+            
+            scrape_player(g_name, tagline)
+            
+            # Pausa breve entre jugadores
+            human_sleep(2, 4)
+            
     except Exception as e:
-        print(f"🔴 Error Main: {e}")
+        log(f"Fallo fatal: {e}", "CRITICAL")
         sys.exit(1)
