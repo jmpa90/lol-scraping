@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from urllib.parse import quote
 
 # ==========================================
-# 1. CONFIGURACIÓN DE RUTAS
+# 1. CONFIGURACIÓN DE RUTAS (GitHub Actions)
 # ==========================================
 def setup_paths():
     print("--- [SETUP] Configurando rutas... ---")
@@ -22,48 +22,57 @@ def setup_paths():
 CSV_PATH = setup_paths()
 
 # ==========================================
-# 2. UTILIDADES
+# 2. UTILIDADES (De tu script local)
 # ==========================================
 def log(msg, level="INFO"):
+    # Usamos print simple para evitar problemas de encoding en logs de Linux
     print(f"[{level}] {msg}")
 
-def human_sleep(min_s=1.0, max_s=2.0):
-    time.sleep(random.uniform(min_s, max_s))
+def human_sleep(a=1.0, b=2.0):
+    time.sleep(random.uniform(a, b))
 
-def played_at_to_timestamp(played_at_str: str) -> int:
+def parse_match_raw_text(raw_text: str, player_name: str) -> dict:
+    lines = [l.strip() for l in raw_text.splitlines() if l.strip()]
+    data = {}
+
+    # A veces la primera línea no es la cola si hay banners, pero confiamos en tu lógica local
+    if lines:
+        data["queue"] = lines[0]
+
+    for l in lines:
+        if l in ("Victory", "Defeat", "Remake"):
+            data["result"] = l
+            break
+
+    for l in lines:
+        if re.match(r"\d+m \d+s", l):
+            data["duration"] = l
+            break
+
+    kda_match = re.search(r"(\d+)\s*/\s*(\d+)\s*/\s*(\d+)", raw_text)
+    if kda_match:
+        data["kills"] = int(kda_match.group(1))
+        data["deaths"] = int(kda_match.group(2))
+        data["assists"] = int(kda_match.group(3))
+
+    try:
+        # Búsqueda simple del campeón basada en el nombre del jugador
+        if player_name in lines:
+            idx = lines.index(player_name)
+            if idx > 0:
+                data["champion"] = lines[idx - 1]
+    except ValueError:
+        data["champion"] = None
+
+    return data
+
+def played_at_to_timestamp_ms(played_at_str: str) -> int:
     try:
         dt = datetime.strptime(played_at_str, "%m/%d/%Y, %I:%M %p")
         dt_utc = dt.replace(tzinfo=timezone.utc)
         return int(dt_utc.timestamp() * 1000)
-    except:
+    except Exception as e:
         return 0
-
-def parse_match_details(raw_text: str, player_name: str) -> dict:
-    lines = [l.strip() for l in raw_text.splitlines() if l.strip()]
-    data = {}
-    if not lines: return data
-    
-    # Intento de parseo seguro
-    try:
-        data["queue"] = lines[0]
-        for l in lines:
-            if l in ("Victory", "Defeat", "Remake"):
-                data["result"] = l
-                break
-        for l in lines:
-            if re.match(r"\d+m \d+s", l):
-                data["duration"] = l
-                break
-        kda_match = re.search(r"(\d+)\s*/\s*(\d+)\s*/\s*(\d+)", raw_text)
-        if kda_match:
-            data["kills"] = int(kda_match.group(1))
-            data["deaths"] = int(kda_match.group(2))
-            data["assists"] = int(kda_match.group(3))
-    except:
-        pass
-
-    data["champion"] = "Unknown" 
-    return data
 
 # ==========================================
 # 3. LÓGICA DE SCRAPING
@@ -84,7 +93,7 @@ def scrape_player(game_name: str, tagline: str):
         )
         context = browser.new_context(
             viewport={"width": 1920, "height": 1080},
-            locale="en-US",
+            locale="en-US", # Forzamos EN-US para coincidir con tu lógica de fechas
             user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         )
         page = context.new_page()
@@ -109,35 +118,39 @@ def scrape_player(game_name: str, tagline: str):
             total = buttons.count()
             log(f"Partidas encontradas: {total}", "INFO")
 
+            # Limitamos a 3 para la prueba en GitHub Actions
             limit = 3 
             for i in range(min(total, limit)): 
                 try:
+                    # 1. Obtenemos el botón específico
                     btn = buttons.nth(i)
                     btn.scroll_into_view_if_needed()
+                    human_sleep(0.3, 0.6)
+
+                    # 2. DEFINICIÓN DE LA TARJETA (Tu lógica Local Exacta)
+                    # Busca el ancestro que contiene texto "Ranked Solo/Duo" y el botón "Show More"
+                    # Esto asegura que estamos en la tarjeta correcta.
+                    match_card = btn.locator(
+                        "xpath=ancestor::*[.//text()[contains(., 'Ranked Solo/Duo')] "
+                        "and .//button[contains(., 'Show More Detail Games')]][1]"
+                    )
+
+                    # 3. Extraer Texto y Fecha (ANTES de expandir, más seguro)
+                    raw_text = match_card.inner_text()
                     
-                    # --- CORRECCIÓN DE SELECTOR ---
-                    # El 'ancestor::li' fallaba. Ahora buscamos el contenedor padre genérico 
-                    # que envuelve al botón y al texto de la partida.
-                    # Buscamos 4 niveles arriba (suele ser suficiente para salir del botón al contenedor)
-                    match_card = btn.locator("xpath=../../..").first
-                    
-                    # Extraer Fecha (con manejo de errores si no lo encuentra)
                     played_at_str = "Unknown"
                     try:
                         time_span = match_card.locator("span[data-tooltip-content]").first
-                        # Damos un timeout pequeño por si acaso
-                        time_span.wait_for(timeout=1000) 
                         played_at_str = time_span.get_attribute("data-tooltip-content")
-                    except: 
-                        pass
+                    except: pass
                     
-                    played_at_ts = played_at_to_timestamp(played_at_str)
+                    played_at_ts = played_at_to_timestamp_ms(played_at_str)
 
-                    # Expandir
+                    # 4. Expandir para sacar la URL
                     btn.click(force=True)
                     human_sleep(1.0, 1.5)
 
-                    # ESTRATEGIA: ÚLTIMO TEXTBOX
+                    # 5. Obtener URL (Estrategia .last textbox)
                     target_input = page.get_by_role("textbox").last
                     match_url = ""
                     
@@ -146,19 +159,11 @@ def scrape_player(game_name: str, tagline: str):
                         match_url = target_input.get_attribute("value")
                     except:
                         log(f"No se pudo extraer URL partida {i+1}", "WARN")
-                        # Intentamos cerrar antes de continuar
                         btn.click(force=True)
                         continue
 
                     if match_url:
-                        # Extraer Datos
-                        raw_text = "No Text"
-                        try:
-                            raw_text = match_card.inner_text(timeout=2000)
-                        except:
-                            log("No se pudo leer texto de la tarjeta", "WARN")
-
-                        parsed_data = parse_match_details(raw_text, game_name)
+                        parsed_data = parse_match_raw_text(raw_text, game_name)
                         
                         final_data = {
                             "player_name": game_name,
@@ -175,6 +180,7 @@ def scrape_player(game_name: str, tagline: str):
                         print(json.dumps(final_data, indent=2, ensure_ascii=False))
                         print("-"*30 + "\n")
                     
+                    # Cerrar detalle
                     btn.click(force=True)
                     human_sleep(0.3, 0.6)
 
