@@ -18,9 +18,8 @@ from googleapiclient.http import MediaFileUpload
 # 1. CONFIGURACIÓN
 # ==========================================
 
-# ⚠️⚠️⚠️ ¡PEGA AQUÍ EL ID DE TU NUEVA CARPETA DE DRIVE! ⚠️⚠️⚠️
+# ⚠️⚠️⚠️ ¡ASEGÚRATE DE QUE ESTE ID SEA EL CORRECTO DE TU CARPETA! ⚠️⚠️⚠️
 DRIVE_FOLDER_ID = "1vTF3GwgMyjzF4OcaJtpSNz9ezyG0htaJ" 
-# (Si es distinto al del ejemplo, cámbialo arriba)
 
 SCOPES = ["https://www.googleapis.com/auth/drive"]
 
@@ -55,8 +54,10 @@ def upload_json_to_drive(service, match_data):
     if not service:
         return
 
-    # Nombre del archivo
-    file_name = f"{re.sub(r'[^\w\-]', '_', match_data['opgg_url'])}.json"
+    # === CORRECCIÓN AQUÍ ===
+    # Calculamos el nombre seguro FUERA del f-string para evitar SyntaxError en Python < 3.12
+    safe_name = re.sub(r'[^\w\-]', '_', match_data['opgg_url'])
+    file_name = f"{safe_name}.json"
     
     # Crear archivo temporal localmente
     temp_path = file_name
@@ -114,28 +115,52 @@ def played_at_to_timestamp(played_at_str: str) -> int:
     except:
         return 0
 
-def parse_match_details(raw_text: str, player_name: str) -> dict:
+def parse_match_raw_text(raw_text: str, player_name: str) -> dict:
+    """Extrae datos básicos del texto crudo de la tarjeta"""
     lines = [l.strip() for l in raw_text.splitlines() if l.strip()]
     data = {}
-    if not lines: return data
-    try:
+    
+    # Queue (a veces la primera línea)
+    if lines:
         data["queue"] = lines[0]
-        for l in lines:
-            if l in ("Victory", "Defeat", "Remake"):
-                data["result"] = l
-                break
-        for l in lines:
-            if re.match(r"\d+m \d+s", l):
-                data["duration"] = l
-                break
-        kda_match = re.search(r"(\d+)\s*/\s*(\d+)\s*/\s*(\d+)", raw_text)
-        if kda_match:
-            data["kills"] = int(kda_match.group(1))
-            data["deaths"] = int(kda_match.group(2))
-            data["assists"] = int(kda_match.group(3))
-    except: pass
-    data["champion"] = "Unknown" 
+
+    # Resultado
+    for l in lines:
+        if l in ("Victory", "Defeat", "Remake"):
+            data["result"] = l
+            break
+
+    # Duración
+    for l in lines:
+        if re.match(r"\d+m \d+s", l):
+            data["duration"] = l
+            break
+
+    # KDA
+    kda_match = re.search(r"(\d+)\s*/\s*(\d+)\s*/\s*(\d+)", raw_text)
+    if kda_match:
+        data["kills"] = int(kda_match.group(1))
+        data["deaths"] = int(kda_match.group(2))
+        data["assists"] = int(kda_match.group(3))
+
+    # Champion
+    try:
+        if player_name in lines:
+            idx = lines.index(player_name)
+            if idx > 0:
+                data["champion"] = lines[idx - 1]
+    except ValueError:
+        data["champion"] = None
+
     return data
+
+def played_at_to_timestamp_ms(played_at_str: str) -> int:
+    try:
+        dt = datetime.strptime(played_at_str, "%m/%d/%Y, %I:%M %p")
+        dt_utc = dt.replace(tzinfo=timezone.utc)
+        return int(dt_utc.timestamp() * 1000)
+    except Exception:
+        return 0
 
 # ==========================================
 # 4. LÓGICA DE SCRAPING PRINCIPAL
@@ -175,29 +200,37 @@ def scrape_player(service, game_name: str, tagline: str):
                 log(f"No se encontraron partidas.", "WARN")
                 return
 
-            matches_cards = page.locator("li").filter(has=page.get_by_role("button", name="Show More Detail Games"))
-            total = matches_cards.count()
+            buttons = page.get_by_role("button", name="Show More Detail Games")
+            total = buttons.count()
             log(f"Partidas encontradas: {total}", "INFO")
 
             limit = 3 
             for i in range(min(total, limit)): 
                 try:
-                    card = matches_cards.nth(i)
-                    card.scroll_into_view_if_needed()
+                    btn = buttons.nth(i)
+                    btn.scroll_into_view_if_needed()
+                    human_sleep(0.3, 0.6)
+                    
+                    # === ESTRATEGIA LOCAL: ANCESTOR ===
+                    match_card = btn.locator(
+                        "xpath=ancestor::*[.//text()[contains(., 'Ranked Solo/Duo')] "
+                        "and .//button[contains(., 'Show More Detail Games')]][1]"
+                    )
                     
                     # Extraer texto previo
-                    raw_text = card.inner_text()
+                    raw_text = match_card.inner_text()
                     played_at_str = "Unknown"
                     try:
-                        played_at_str = card.locator("span[data-tooltip-content]").first.get_attribute("data-tooltip-content")
+                        played_at_str = match_card.locator("span[data-tooltip-content]").first.get_attribute("data-tooltip-content")
                     except: pass
-                    played_at_ts = played_at_to_timestamp(played_at_str)
+                    
+                    played_at_ts = played_at_to_timestamp_ms(played_at_str)
 
                     # Expandir
-                    btn = card.get_by_role("button", name="Show More Detail Games")
                     btn.click(force=True)
                     human_sleep(1.0, 1.5)
 
+                    # Extraer URL (Textbox last strategy)
                     target_input = page.get_by_role("textbox").last
                     match_url = ""
                     try:
@@ -209,7 +242,7 @@ def scrape_player(service, game_name: str, tagline: str):
                         continue
 
                     if match_url:
-                        parsed_data = parse_match_details(raw_text, game_name)
+                        parsed_data = parse_match_raw_text(raw_text, game_name)
                         
                         final_data = {
                             "player_name": game_name,
@@ -222,7 +255,7 @@ def scrape_player(service, game_name: str, tagline: str):
                         }
 
                         # ========================================
-                        # AQUÍ LA MAGIA: SUBIR A DRIVE
+                        # SUBIDA A DRIVE
                         # ========================================
                         print(f"📤 Preparando subida para: {match_url[-15:]}...")
                         upload_json_to_drive(service, final_data)
