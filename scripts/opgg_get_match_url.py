@@ -60,26 +60,24 @@ def scrape_single_test(game_name: str, tagline: str):
         try:
             log("Navegando...")
             page.goto(opgg_url, wait_until="domcontentloaded", timeout=60000)
-            human_sleep(2, 3) # Espera inicial un poco más larga para asegurar carga de JS
+            human_sleep(2, 3)
 
-            # --- NUEVO: INTENTAR CERRAR COOKIES / ADS ---
+            # Intentar cerrar cookies
             try:
-                accept_cookies = page.get_by_role("button", name="Accept All")
-                if accept_cookies.is_visible():
-                    log("🍪 Aceptando cookies...")
-                    accept_cookies.click()
-                    human_sleep(0.5, 1)
+                page.get_by_role("button", name="Accept All").click(timeout=2000)
+                log("🍪 Cookies aceptadas.")
             except: pass
 
-            log("Buscando botones de partidas...")
+            log("Buscando lista de partidas...")
             try:
-                page.get_by_role("button", name="Show More Detail Games").first.wait_for(timeout=20000)
+                page.wait_for_selector("li button:has-text('Show More Detail Games')", timeout=15000)
             except:
-                log("❌ No se encontraron los botones a tiempo.")
-                page.screenshot(path="debug_no_buttons.png")
+                log("❌ No cargó la lista. Foto guardada.")
+                page.screenshot(path="debug_list_fail.png")
                 return
 
-            buttons = page.get_by_role("button", name="Show More Detail Games")
+            # Seleccionamos todos los botones
+            buttons = page.locator("button:has-text('Show More Detail Games')")
             count = buttons.count()
             log(f"✅ Partidas encontradas: {count}")
 
@@ -87,36 +85,35 @@ def scrape_single_test(game_name: str, tagline: str):
                 log("Procesando la PRIMERA partida...")
                 btn = buttons.first
                 btn.scroll_into_view_if_needed()
-                human_sleep(0.5, 1)
                 
-                # Clic forzado
+                # --- AQUÍ ESTÁ EL CAMBIO CLAVE: IDENTIFICAR EL CONTENEDOR PADRE ---
+                # Buscamos el <li> que contiene este botón. Todo lo que nos importa ocurre ahí dentro.
+                match_card = btn.locator("xpath=ancestor::li").first
+                
+                # Clic para expandir
                 log("Haciendo Click...")
                 btn.click(force=True)
                 
-                # --- AQUÍ ESTABA EL ERROR ---
-                # Ahora esperamos explícitamente a que aparezca el input
-                log("⏳ Esperando que se expanda el detalle (Timeout 15s)...")
+                log("⏳ Buscando input DENTRO de la tarjeta (state='attached')...")
+                
+                # Buscamos el input SOLO dentro de match_card
+                # Usamos state="attached" para ser menos estrictos con la visibilidad
+                target_input = match_card.locator("input.link")
                 
                 try:
-                    # Esperamos hasta 15 segundos a que aparezca el input con la clase .link
-                    page.wait_for_selector("input.link", state="visible", timeout=15000)
-                    
-                    # Una vez visible, lo capturamos
-                    url_input = page.locator("input.link").last
-                    match_url = url_input.get_attribute("value")
+                    target_input.wait_for(state="attached", timeout=10000)
+                    match_url = target_input.get_attribute("value")
                     
                     if match_url:
                         print(f"\n🎉 ¡ÉXITO TOTAL! URL OBTENIDA: {match_url}")
-                        
-                        # (Opcional) Guardar foto del éxito
-                        page.screenshot(path="success_match_open.png")
+                        page.screenshot(path="success.png")
                     else:
-                        log("⚠️ El input apareció pero estaba vacío.")
-                        
-                except Exception as e:
-                    log(f"❌ El detalle no se abrió o el input no apareció. Error: {e}")
-                    page.screenshot(path="debug_expand_fail.png", full_page=True)
+                        log("⚠️ Input encontrado pero value vacío.")
+                        print("HTML de la tarjeta:", match_card.inner_html()[:500]) # Debug HTML parcial
 
+                except Exception as e:
+                    log(f"❌ Fallo al buscar input dentro de la tarjeta: {e}")
+                    page.screenshot(path="debug_scope_fail.png", full_page=True)
             else:
                 log("⚠️ 0 Partidas encontradas.")
 
