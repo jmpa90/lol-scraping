@@ -19,7 +19,7 @@ from googleapiclient.http import MediaFileUpload
 # ==========================================
 
 # ⚠️ TU FOLDER ID
-DRIVE_FOLDER_ID = "1LnxIj6pEmXkib9TogmbtjkERhbLc9b5u" 
+DRIVE_FOLDER_ID = "1vTF3GwgMyjzF4OcaJtpSNz9ezyG0htaJ" 
 
 SCOPES = ["https://www.googleapis.com/auth/drive"]
 
