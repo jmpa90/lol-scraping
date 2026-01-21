@@ -2,16 +2,13 @@ from playwright.sync_api import sync_playwright
 import pandas as pd
 import time
 import random
-import json
 import os
 import sys
-import re
 from urllib.parse import quote
 
 # ==========================================
-# PATH CONFIGURATION
+# CONFIGURACIÓN DE RUTAS (INFRAESTRUCTURA GITHUB)
 # ==========================================
-
 def setup_paths():
     print("--- [DEBUG] Iniciando configuración de rutas ---")
     script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -24,7 +21,6 @@ CSV_PATH = setup_paths()
 # ==========================================
 # UTILS
 # ==========================================
-
 def log(msg):
     print(f"[INFO] {msg}")
 
@@ -32,9 +28,8 @@ def human_sleep(min_s=1.0, max_s=2.0):
     time.sleep(random.uniform(min_s, max_s))
 
 # ==========================================
-# SCRAPER LOGIC
+# SCRAPER LOGIC (LÓGICA LOCAL ADAPTADA)
 # ==========================================
-
 def scrape_single_test(game_name: str, tagline: str):
     player_id = f"{quote(game_name)}-{tagline}"
     opgg_url = f"https://op.gg/lol/summoners/kr/{player_id}?queue_type=SOLORANKED"
@@ -62,22 +57,22 @@ def scrape_single_test(game_name: str, tagline: str):
             page.goto(opgg_url, wait_until="domcontentloaded", timeout=60000)
             human_sleep(2, 3)
 
-            # Intentar cerrar cookies
+            # Intentar cerrar cookies (Best effort)
             try:
                 page.get_by_role("button", name="Accept All").click(timeout=2000)
-                log("🍪 Cookies aceptadas.")
             except: pass
 
-            log("Buscando lista de partidas...")
+            log("Buscando botones 'Show More Detail Games'...")
+            
+            # Usamos get_by_role como en tu script local
             try:
-                page.wait_for_selector("li button:has-text('Show More Detail Games')", timeout=15000)
+                page.get_by_role("button", name="Show More Detail Games").first.wait_for(timeout=20000)
             except:
-                log("❌ No cargó la lista. Foto guardada.")
-                page.screenshot(path="debug_list_fail.png")
+                log("❌ No se encontraron botones.")
+                page.screenshot(path="debug_no_buttons.png")
                 return
 
-            # Seleccionamos todos los botones
-            buttons = page.locator("button:has-text('Show More Detail Games')")
+            buttons = page.get_by_role("button", name="Show More Detail Games")
             count = buttons.count()
             log(f"✅ Partidas encontradas: {count}")
 
@@ -86,34 +81,37 @@ def scrape_single_test(game_name: str, tagline: str):
                 btn = buttons.first
                 btn.scroll_into_view_if_needed()
                 
-                # --- AQUÍ ESTÁ EL CAMBIO CLAVE: IDENTIFICAR EL CONTENEDOR PADRE ---
-                # Buscamos el <li> que contiene este botón. Todo lo que nos importa ocurre ahí dentro.
-                match_card = btn.locator("xpath=ancestor::li").first
-                
-                # Clic para expandir
+                # Clic forzado (útil para GitHub Actions con Ads)
                 log("Haciendo Click...")
                 btn.click(force=True)
                 
-                log("⏳ Buscando input DENTRO de la tarjeta (state='attached')...")
+                # --- LA CLAVE DE TU SCRIPT LOCAL ---
+                log("⏳ Esperando un momento a que aparezca el textbox...")
+                human_sleep(1.5, 2.5) # Damos tiempo a la UI
                 
-                # Buscamos el input SOLO dentro de match_card
-                # Usamos state="attached" para ser menos estrictos con la visibilidad
-                target_input = match_card.locator("input.link")
+                log("🎣 Intentando obtener el ÚLTIMO textbox de toda la página...")
                 
                 try:
-                    target_input.wait_for(state="attached", timeout=10000)
+                    # ESTRATEGIA ORIGINAL LOCAL:
+                    # Buscamos TODOS los textboxes y tomamos el ÚLTIMO (.last)
+                    # Esto evita tener que buscar dentro de un contenedor específico
+                    target_input = page.get_by_role("textbox").last
+                    
+                    # Esperamos que esté listo (por seguridad)
+                    target_input.wait_for(state="attached", timeout=5000)
+                    
                     match_url = target_input.get_attribute("value")
                     
                     if match_url:
                         print(f"\n🎉 ¡ÉXITO TOTAL! URL OBTENIDA: {match_url}")
                         page.screenshot(path="success.png")
                     else:
-                        log("⚠️ Input encontrado pero value vacío.")
-                        print("HTML de la tarjeta:", match_card.inner_html()[:500]) # Debug HTML parcial
-
+                        log("⚠️ Textbox encontrado pero VALUE vacío.")
+                        
                 except Exception as e:
-                    log(f"❌ Fallo al buscar input dentro de la tarjeta: {e}")
-                    page.screenshot(path="debug_scope_fail.png", full_page=True)
+                    log(f"❌ Falló la estrategia del último textbox: {e}")
+                    page.screenshot(path="debug_textbox_fail.png", full_page=True)
+
             else:
                 log("⚠️ 0 Partidas encontradas.")
 
@@ -126,7 +124,6 @@ def scrape_single_test(game_name: str, tagline: str):
 # ==========================================
 # MAIN EXECUTION
 # ==========================================
-
 if __name__ == "__main__":
     if not os.path.exists(CSV_PATH):
         print(f"🔴 ERROR FATAL: No se encontró el CSV en {CSV_PATH}")
