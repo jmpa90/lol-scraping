@@ -10,7 +10,15 @@ from datetime import datetime, timezone
 from urllib.parse import quote
 
 # === GOOGLE IMPORTS ===
-from google.oauth2.credentials import Credentials
+# from google.oauth2.credentials import Credentials
+# from googleapiclient.discovery import build
+# from googleapiclient.http import MediaFileUpload
+
+# ... (imports anteriores se mantienen) ...
+
+# === GOOGLE IMPORTS ===
+# CAMBIO 1: Importar service_account en lugar de usar Credentials genérico de usuario
+from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 
@@ -32,22 +40,45 @@ def setup_paths():
 
 CSV_PATH = setup_paths()
 
+# # ==========================================
+# # 2. UTILIDADES DE DRIVE
+# # ==========================================
+# def get_drive_service():
+#     """Autentica y devuelve el servicio de Drive."""
+#     token_json = os.environ.get("GOOGLE_DRIVE_TOKEN")
+#     if not token_json:
+#         print("❌ [DRIVE] No se encontró la variable GOOGLE_DRIVE_TOKEN")
+#         return None
+    
+#     try:
+#         creds = Credentials.from_authorized_user_info(json.loads(token_json), SCOPES)
+#         return build("drive", "v3", credentials=creds)
+#     except Exception as e:
+#         print(f"❌ [DRIVE] Error de autenticación: {e}")
+#         return None
+
 # ==========================================
 # 2. UTILIDADES DE DRIVE
 # ==========================================
 def get_drive_service():
-    """Autentica y devuelve el servicio de Drive."""
-    token_json = os.environ.get("GOOGLE_DRIVE_TOKEN")
-    if not token_json:
-        print("❌ [DRIVE] No se encontró la variable GOOGLE_DRIVE_TOKEN")
+    """Autentica y devuelve el servicio de Drive usando Service Account."""
+    
+    # CAMBIO 2: Buscar la variable GCP_SERVICE_ACCOUNT
+    sa_json = os.environ.get("GCP_SERVICE_ACCOUNT")
+    if not sa_json:
+        print("❌ [DRIVE] No se encontró la variable GCP_SERVICE_ACCOUNT")
         return None
     
     try:
-        creds = Credentials.from_authorized_user_info(json.loads(token_json), SCOPES)
+        # CAMBIO 3: Cargar credenciales de cuenta de servicio
+        sa_info = json.loads(sa_json)
+        creds = service_account.Credentials.from_service_account_info(sa_info, scopes=SCOPES)
         return build("drive", "v3", credentials=creds)
     except Exception as e:
-        print(f"❌ [DRIVE] Error de autenticación: {e}")
+        print(f"❌ [DRIVE] Error de autenticación con Service Account: {e}")
         return None
+
+
 
 def upload_json_to_drive(service, match_data):
     """Guarda un dict como JSON temporal y lo sube a Drive."""
