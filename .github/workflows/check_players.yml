@@ -50,17 +50,28 @@ jobs:
           key: ${{ runner.os }}-playwright-v1.57.0
 
       # Instalamos TODO (pandas, playwright, google-api...)
+      # - name: Install Dependencies
+      #   working-directory: ./scraper_repo
+      #   run: |
+      #     pip install pandas playwright google-api-python-client google-auth-httplib2 google-auth-oauthlib
+          
+      # - name: Install Playwright (If not cached)
+      #   working-directory: ./scraper_repo
+      #   if: steps.cache-playwright.outputs.cache-hit != 'true'
+      #   run: |
+      #     playwright install chromium
+      #     playwright install-deps
+
       - name: Install Dependencies
         working-directory: ./scraper_repo
         run: |
           pip install pandas playwright google-api-python-client google-auth-httplib2 google-auth-oauthlib
-          
-      - name: Install Playwright (If not cached)
+
+      - name: Install Playwright Browsers
         working-directory: ./scraper_repo
-        if: steps.cache-playwright.outputs.cache-hit != 'true'
         run: |
-          playwright install chromium
-          playwright install-deps
+          python -m playwright install chromium
+          python -m playwright install-deps
 
       - name: Run Scraper and Upload
         working-directory: ./scraper_repo
