@@ -363,7 +363,7 @@ from googleapiclient.http import MediaFileUpload
 
 DRIVE_FOLDER_ID = "1vTF3GwgMyjzF4OcaJtpSNz9ezyG0htaJ" 
 # Scope para subir archivos
-SCOPES = ["https://www.googleapis.com/auth/drive.file"]
+SCOPES = ["https://www.googleapis.com/auth/drive"]
 # Límite de navegadores simultáneos (3 es seguro para GitHub Actions)
 CONCURRENCY_LIMIT = 3 
 
@@ -382,7 +382,7 @@ CSV_PATH = setup_paths()
 def get_drive_service():
     """Autentica usando el Refresh Token (eterno si la app está en Producción)."""
     # Usamos la misma variable de entorno para no cambiar el YAML
-    token_json = os.environ.get("GCP_SERVICE_ACCOUNT") 
+    token_json = os.environ.get("GOOGLE_OAUTH_TOKEN")
     if not token_json:
         print("❌ [DRIVE] Falta el secreto GCP_SERVICE_ACCOUNT (con el token OAuth)")
         return None
