@@ -197,7 +197,13 @@ def scrape_player(service, game_name: str, tagline: str):
     with sync_playwright() as p:
         browser = p.chromium.launch(
             headless=True,
-            args=["--window-size=1920,1080", "--disable-blink-features=AutomationControlled"]
+            # args=["--window-size=1920,1080", "--disable-blink-features=AutomationControlled"]
+            args=[
+                "--window-size=1920,1080", 
+                "--disable-blink-features=AutomationControlled",
+                "--no-sandbox",             # <--- AGREGAR ESTO
+                "--disable-setuid-sandbox"  # <--- Y ESTO
+            ]
         )
         context = browser.new_context(
             viewport={"width": 1920, "height": 1080},
