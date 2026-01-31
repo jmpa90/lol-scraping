@@ -382,7 +382,7 @@ CSV_PATH = setup_paths()
 def get_drive_service():
     """Autentica usando el Refresh Token (eterno si la app está en Producción)."""
     # Usamos la misma variable de entorno para no cambiar el YAML
-    token_json = os.environ.get("GOOGLE_OAUTH_TOKEN")
+    token_json = os.environ.get("GOOGLE_DRIVE_TOKEN")
     if not token_json:
         print("❌ [DRIVE] Falta el secreto GCP_SERVICE_ACCOUNT (con el token OAuth)")
         return None
